@@ -1,0 +1,5 @@
+{
+  "name": "Creador d'Animacions",
+  "description": "Una eina per crear animacions a partir d'imatges o vídeos. Permet reordenar fotogrames, ajustar la velocitat, exportar a ZIP i persistència de sessió.",
+  "requestFramePermissions": []
+}

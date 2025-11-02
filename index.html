@@ -384,7 +384,7 @@
                 dom.framesList.insertAdjacentHTML('beforeend', '<li class="drop-indicator"></li>');
             }
             state.frames.forEach((frame, index) => {
-                const isCurrent = currentFrame?.url === frame.url;
+                const isCurrent = enabledFrames.length > 0 && currentFrame?.url === frame.url;
                 const listItemHTML = `
                     <li
                         class="list-item flex items-center p-2 rounded-lg space-x-2 
@@ -418,7 +418,8 @@
         
         function updateCurrentFrameIndex() {
             const enabledFrames = getEnabledFrames();
-            if (state.currentFrameIndex >= enabledFrames.length && enabledFrames.length > 0) {
+            // Si l'índex actual està fora de límits o no hi ha fotogrames, reinicia'l a 0.
+            if (enabledFrames.length === 0 || state.currentFrameIndex >= enabledFrames.length) {
                  state.currentFrameIndex = 0;
             }
         }
@@ -437,7 +438,9 @@
             if (state.isPlaying) {
                 animationInterval = setInterval(() => {
                     const enabledCount = getEnabledFrames().length;
-                    state.currentFrameIndex = (state.currentFrameIndex + 1) % enabledCount;
+                    if (enabledCount > 0) {
+                        state.currentFrameIndex = (state.currentFrameIndex + 1) % enabledCount;
+                    }
                     render();
                 }, state.animationSpeed);
             } else {
@@ -582,6 +585,40 @@
             render();
         }
 
+        /**
+         * Gestiona els canvis a la llista de fotogrames (esborrar, activar/desactivar)
+         * de manera intel·ligent, mantenint la posició de reproducció si és possible.
+         * @param {() => void} changeFunction La funció que modifica state.frames
+         */
+        function handleFrameListChange(changeFunction) {
+            const enabledFramesBefore = getEnabledFrames();
+            const currentFrameUrlBefore = enabledFramesBefore[state.currentFrameIndex]?.url;
+
+            changeFunction();
+
+            const enabledFramesAfter = getEnabledFrames();
+            let newIndex = -1;
+            if (currentFrameUrlBefore) {
+                newIndex = enabledFramesAfter.findIndex(f => f.url === currentFrameUrlBefore);
+            }
+
+            if (newIndex !== -1) {
+                // El fotograma actual encara existeix, actualitzem l'índex.
+                state.currentFrameIndex = newIndex;
+            } else {
+                // El fotograma ha desaparegut o no n'hi havia cap.
+                // Assegurem que l'índex sigui vàlid.
+                updateCurrentFrameIndex();
+            }
+
+            // Aturem la reproducció si no hi ha suficients fotogrames.
+            if (state.isPlaying && enabledFramesAfter.length < 2) {
+                togglePlay();
+            } else {
+                render();
+            }
+        }
+
         function bindEvents() {
             // File selection
             dom.selectImagesBtn.addEventListener('click', () => dom.imageInput.click());
@@ -600,12 +637,16 @@
             dom.playPauseBtn.addEventListener('click', togglePlay);
             dom.prevFrameBtn.addEventListener('click', () => {
                 const enabledCount = getEnabledFrames().length;
-                state.currentFrameIndex = (state.currentFrameIndex - 1 + enabledCount) % enabledCount;
+                if (enabledCount > 0) {
+                    state.currentFrameIndex = (state.currentFrameIndex - 1 + enabledCount) % enabledCount;
+                }
                 render();
             });
             dom.nextFrameBtn.addEventListener('click', () => {
                 const enabledCount = getEnabledFrames().length;
-                state.currentFrameIndex = (state.currentFrameIndex + 1) % enabledCount;
+                if (enabledCount > 0) {
+                    state.currentFrameIndex = (state.currentFrameIndex + 1) % enabledCount;
+                }
                 render();
             });
             dom.speedSlider.addEventListener('input', (e) => {
@@ -625,29 +666,43 @@
 
             // Frame list controls
             dom.selectAllBtn.addEventListener('click', () => {
-                state.frames = state.frames.map(f => ({ ...f, enabled: true }));
-                updateCurrentFrameIndex();
-                render();
+                handleFrameListChange(() => {
+                    state.frames.forEach(f => f.enabled = true);
+                });
             });
             dom.deselectAllBtn.addEventListener('click', () => {
-                state.frames = state.frames.map(f => ({ ...f, enabled: false }));
-                updateCurrentFrameIndex();
-                render();
+                handleFrameListChange(() => {
+                    state.frames.forEach(f => f.enabled = false);
+                });
             });
             
             // Event delegation for dynamic frame list items
             dom.framesList.addEventListener('click', (e) => {
                 const target = e.target;
-                const index = Number(target.dataset.index);
+                if (!target) return;
+                
+                const listItem = target.closest('.list-item');
+                if (!listItem) return;
+                
+                const index = Number(listItem.dataset.index);
 
                 if (target.classList.contains('delete-btn')) {
-                    state.frames = state.frames.filter((_, i) => i !== index);
-                    updateCurrentFrameIndex();
-                    render();
+                    handleFrameListChange(() => {
+                        state.frames.splice(index, 1);
+                    });
                 } else if (target.classList.contains('frame-checkbox')) {
-                    state.frames[index].enabled = !state.frames[index].enabled;
-                    updateCurrentFrameIndex();
-                    render();
+                    handleFrameListChange(() => {
+                        state.frames[index].enabled = !state.frames[index].enabled;
+                    });
+                } else if (!target.classList.contains('drag-handle')) {
+                    // Clic a qualsevol lloc de l'element excepte els botons
+                    const clickedFrame = state.frames[index];
+                    const enabledFrames = getEnabledFrames();
+                    const newEnabledIndex = enabledFrames.findIndex(f => f.url === clickedFrame.url);
+                    if (newEnabledIndex > -1) {
+                         state.currentFrameIndex = newEnabledIndex;
+                         render();
+                    }
                 }
             });
 
@@ -681,21 +736,16 @@
                 e.preventDefault();
                 if (state.draggedItemIndex === null || state.dragOverIndex === null) return;
                 
-                const movedFrame = state.frames[state.draggedItemIndex];
-                const remainingFrames = state.frames.filter((_, i) => i !== state.draggedItemIndex);
-                
-                let finalIndex = state.dragOverIndex;
-                if (state.draggedItemIndex < finalIndex) finalIndex--;
-
-                state.frames = [
-                    ...remainingFrames.slice(0, finalIndex),
-                    movedFrame,
-                    ...remainingFrames.slice(finalIndex)
-                ];
+                handleFrameListChange(() => {
+                    const movedFrame = state.frames.splice(state.draggedItemIndex, 1)[0];
+                    let finalIndex = state.dragOverIndex;
+                    if (state.draggedItemIndex < finalIndex) finalIndex--;
+                    state.frames.splice(finalIndex, 0, movedFrame);
+                });
                 
                 state.draggedItemIndex = null;
                 state.dragOverIndex = null;
-                render();
+                // No cal render() aquí perquè handleFrameListChange ja ho fa
             });
             
             // Resizing

@@ -1,13 +1,14 @@
 <!DOCTYPE html>
 <html lang="ca">
 <head>
-    <meta charset="UTF-M-8">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Creador d'Animacions</title>
     <!-- Incloure Tailwind CSS des del CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Incloure JSZip per a la generació del fitxer ZIP -->
+    <!-- Incloure JSZip i FileSaver per a la generació del fitxer ZIP -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/file-saver/2.0.5/file-saver.min.js"></script>
     <style>
         /* Configuració del tema Tailwind i la font Inter */
         tailwind.config = {
@@ -27,7 +28,7 @@
             background-color: #e5e7eb; /* gray-200 */
             transition: background-color 0.2s;
         }
-        .resize-handle:hover {
+        .resize-handle:hover, .resizing {
             background-color: #3b82f6; /* blue-500 */
         }
 
@@ -73,22 +74,676 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        
+        /* Utilitats */
+        .hidden {
+            display: none !important;
+        }
 
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "jszip": "https://aistudiocdn.com/jszip@^3.10.1",
-    "file-saver": "https://aistudiocdn.com/file-saver@^2.0.5"
-  }
-}
-</script>
 </head>
 <body class="bg-gray-50 font-sans">
-    <div id="root"></div>
-    <script type="module" src="index.tsx"></script>
+    <div id="app-container" class="flex flex-col h-screen bg-gray-100">
+        <main 
+            id="drop-zone"
+            class="flex flex-1 overflow-hidden" 
+        >
+            <!-- Viewer Panel -->
+            <div id="viewer-panel" class="flex flex-col p-4 bg-white">
+                <div 
+                    id="viewer-bg"
+                    class="flex-1 flex items-center justify-center rounded-lg"
+                >
+                    <div id="welcome-screen" class="text-center text-gray-500">
+                        <h2 class="text-2xl font-bold mb-2">Creador d'Animacions</h2>
+                        <p>Arrossega i deixa anar imatges o un vídeo aquí per començar</p>
+                        <div class="my-4">O</div>
+                        <button id="select-images-btn" class="bg-blue-500 text-white px-4 py-2 rounded-lg mr-2">Seleccionar Imatges</button>
+                        <button id="import-video-btn" class="bg-green-500 text-white px-4 py-2 rounded-lg">Importar Vídeo</button>
+                        <input type="file" id="image-input" multiple accept="image/*" class="hidden"/>
+                        <input type="file" id="video-input" accept="video/*" class="hidden"/>
+                    </div>
+                    <img id="viewer-img" src="" alt="Frame actual" class="max-w-full max-h-full object-contain hidden"/>
+                    <p id="no-frames-msg" class="text-gray-500 hidden">Selecciona almenys un fotograma per visualitzar</p>
+                </div>
+                 <div id="controls-panel" class="pt-4 hidden">
+                    <div class="flex items-center justify-center space-x-4 mb-4">
+                       <button id="prev-frame-btn">&lt;</button>
+                       <button id="play-pause-btn" class="px-4 py-2 rounded-lg text-white w-32 bg-green-600">
+                           Reproduir
+                       </button>
+                       <button id="next-frame-btn">&gt;</button>
+                       <button id="save-btn" class="bg-indigo-500 text-white px-4 py-2 rounded-lg">💾 Desar</button>
+                   </div>
+                   <div class="flex items-center space-x-4">
+                       <label for="speed-slider">Velocitat (ms):</label>
+                       <input type="range" id="speed-slider" min="1" max="1000" class="w-full"/>
+                       <span id="speed-value">500</span>
+                       <label for="bg-color-picker">Fons:</label>
+                       <input type="color" id="bg-color-picker" />
+                   </div>
+                </div>
+            </div>
+
+            <!-- Resizer -->
+            <div id="resize-handle" class="resize-handle"></div>
+
+            <!-- Frames Panel -->
+            <div id="frames-panel-container" class="flex flex-col p-4 bg-white">
+                <h2 class="text-lg font-bold mb-2">Seqüència de Fotogrames (<span id="enabled-frames-count">0</span> / <span id="total-frames-count">0</span>)</h2>
+                <div class="flex space-x-2 mb-2">
+                    <button id="select-all-btn" class="flex-1 text-xs bg-gray-200 px-2 py-1 rounded">Seleccionar Tots</button>
+                    <button id="deselect-all-btn" class="flex-1 text-xs bg-gray-200 px-2 py-1 rounded">Deseleccionar Tots</button>
+                </div>
+                <ul id="frames-list" class="flex-1 overflow-y-auto">
+                    <!-- Frame items will be injected here by JS -->
+                </ul>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="text-center py-2 bg-gray-200 text-gray-600 text-xs">
+             <p>Desenvolupat per Xavier Ribes</p>
+             <p>GameLab - Departament de Comunicació Audiovisual i Publicitat de la UAB</p>
+        </footer>
+
+         <!-- Save Panel -->
+        <div id="save-panel" class="absolute bottom-0 left-0 right-0 bg-white p-4 shadow-2xl border-t hidden">
+            <h3 class="text-lg font-bold">Desar Animació</h3>
+            <div class="my-2">
+                <label for="saveName" class="font-semibold">Nom del fitxer:</label>
+                <input type="text" id="saveName" value="animacio" class="border p-1 rounded ml-2"/>
+            </div>
+            <div class="my-2">
+                <label for="format" class="font-semibold">Format:</label>
+                <select id="format" class="border p-1 rounded ml-2">
+                    <option value="zip">Fitxer ZIP (.zip)</option>
+                    <option value="individual">Imatges Individuals</option>
+                </select>
+            </div>
+            <div class="mt-4">
+                <button id="confirm-save-btn" class="bg-blue-500 text-white px-4 py-2 rounded-lg">Confirmar i Desar</button>
+                <button id="cancel-save-btn" class="ml-2 text-gray-600">Cancel·lar</button>
+            </div>
+        </div>
+
+        <!-- Video Import Modal -->
+        <div id="video-modal" class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
+            <div class="bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
+                <div id="video-modal-content">
+                    <h3 class="text-xl font-bold mb-4">Configurar Importació de Vídeo</h3>
+                    <p class="mb-2">Durada total del vídeo: <span id="video-duration">0.00</span> segons.</p>
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="trimStart">Inici (s):</label>
+                            <input type="number" id="trimStart" value="0" min="0" step="0.1" class="w-full border p-1 rounded"/>
+                        </div>
+                         <div>
+                            <label for="trimEnd">Final (s):</label>
+                            <input type="number" id="trimEnd" value="0" min="0" step="0.1" class="w-full border p-1 rounded"/>
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                         <label for="fps">Fotogrames per segon (FPS):</label>
+                         <input type="number" id="fps" value="10" min="1" max="30" class="w-full border p-1 rounded"/>
+                    </div>
+                    <div>
+                        <button id="process-video-btn" class="w-full bg-blue-500 text-white px-4 py-2 rounded-lg">Processar Fragment</button>
+                        <button id="cancel-video-btn" class="w-full mt-2 text-gray-600">Cancel·lar</button>
+                    </div>
+                </div>
+                 <div id="video-extraction-progress" class="hidden">
+                    <div class="spinner mx-auto mb-4"></div>
+                    <p id="extraction-status" class="text-center"></p>
+                    <button id="cancel-extraction-btn" class="w-full mt-4 bg-red-500 text-white px-4 py-2 rounded-lg">Cancel·lar Procés</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script type="module">
+        const LOCAL_STORAGE_KEY = 'animationCreatorState';
+
+        // --- State Management ---
+        let state = {
+            frames: [],
+            animationSpeed: 500,
+            backgroundColor: '#f3f4f6',
+            currentFrameIndex: 0,
+            isPlaying: false,
+            isSavePanelVisible: false,
+            isVideoModalVisible: false,
+            videoFile: null,
+            videoDuration: 0,
+            panelWidth: 50,
+            draggedItemIndex: null,
+            dragOverIndex: null,
+        };
+        
+        // --- DOM Element References ---
+        const dom = {
+            appContainer: document.getElementById('app-container'),
+            dropZone: document.getElementById('drop-zone'),
+            viewerPanel: document.getElementById('viewer-panel'),
+            framesPanelContainer: document.getElementById('frames-panel-container'),
+            welcomeScreen: document.getElementById('welcome-screen'),
+            viewerImg: document.getElementById('viewer-img'),
+            viewerBg: document.getElementById('viewer-bg'),
+            noFramesMsg: document.getElementById('no-frames-msg'),
+            controlsPanel: document.getElementById('controls-panel'),
+            selectImagesBtn: document.getElementById('select-images-btn'),
+            importVideoBtn: document.getElementById('import-video-btn'),
+            imageInput: document.getElementById('image-input'),
+            videoInput: document.getElementById('video-input'),
+            playPauseBtn: document.getElementById('play-pause-btn'),
+            prevFrameBtn: document.getElementById('prev-frame-btn'),
+            nextFrameBtn: document.getElementById('next-frame-btn'),
+            speedSlider: document.getElementById('speed-slider'),
+            speedValue: document.getElementById('speed-value'),
+            bgColorPicker: document.getElementById('bg-color-picker'),
+            saveBtn: document.getElementById('save-btn'),
+            selectAllBtn: document.getElementById('select-all-btn'),
+            deselectAllBtn: document.getElementById('deselect-all-btn'),
+            enabledFramesCount: document.getElementById('enabled-frames-count'),
+            totalFramesCount: document.getElementById('total-frames-count'),
+            framesList: document.getElementById('frames-list'),
+            resizeHandle: document.getElementById('resize-handle'),
+            savePanel: document.getElementById('save-panel'),
+            confirmSaveBtn: document.getElementById('confirm-save-btn'),
+            cancelSaveBtn: document.getElementById('cancel-save-btn'),
+            videoModal: document.getElementById('video-modal'),
+            videoModalContent: document.getElementById('video-modal-content'),
+            videoExtractionProgress: document.getElementById('video-extraction-progress'),
+            extractionStatus: document.getElementById('extraction-status'),
+            cancelExtractionBtn: document.getElementById('cancel-extraction-btn'),
+            processVideoBtn: document.getElementById('process-video-btn'),
+            cancelVideoBtn: document.getElementById('cancel-video-btn'),
+            videoDuration: document.getElementById('video-duration'),
+            trimStart: document.getElementById('trimStart'),
+            trimEnd: document.getElementById('trimEnd'),
+            fps: document.getElementById('fps'),
+        };
+
+        let animationInterval = null;
+        let extractionAbortController = null;
+
+        // --- Utility Functions (from fileUtils.ts) ---
+        const readFileAsDataURL = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        };
+
+        const downloadURI = (uri, name) => {
+            const link = document.createElement('a');
+            link.href = uri;
+            link.download = name;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+
+        const createZipAndDownload = async (frames, name) => {
+            const zip = new JSZip();
+            frames.forEach((frame, index) => {
+                const base64Data = frame.url.split(',')[1];
+                const fileName = frame.name.split('.').slice(0, -1).join('.') || `${name}_${String(index + 1).padStart(4, '0')}`;
+                const extension = frame.name.split('.').pop() || 'png';
+                zip.file(`${fileName}.${extension}`, base64Data, { base64: true });
+            });
+
+            try {
+                const content = await zip.generateAsync({ type: 'blob' });
+                saveAs(content, `${name}.zip`);
+            } catch (error) {
+                console.error("Error creating ZIP file:", error);
+            }
+        };
+
+        // --- State Persistence ---
+        function saveStateToLocalStorage() {
+             try {
+                const stateToSave = {
+                    animationSpeed: state.animationSpeed,
+                    backgroundColor: state.backgroundColor,
+                    panelWidth: state.panelWidth,
+                };
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(stateToSave));
+            } catch (error) {
+                console.error("Error al desar l'estat a localStorage:", error);
+            }
+        }
+        
+        function loadStateFromLocalStorage() {
+            try {
+                const savedStateJSON = localStorage.getItem(LOCAL_STORAGE_KEY);
+                if (savedStateJSON) {
+                    const savedState = JSON.parse(savedStateJSON);
+                    state.animationSpeed = savedState.animationSpeed || 500;
+                    state.backgroundColor = savedState.backgroundColor || '#f3f4f6';
+                    state.panelWidth = savedState.panelWidth || 50;
+                }
+            } catch (error) {
+                console.error("Error al carregar l'estat des de localStorage:", error);
+            }
+        }
+
+
+        // --- Core Application Logic & Rendering ---
+        function getEnabledFrames() {
+            return state.frames.filter(f => f.enabled);
+        }
+
+        function render() {
+            const enabledFrames = getEnabledFrames();
+            const currentFrame = enabledFrames[state.currentFrameIndex];
+
+            // Render Viewer
+            if (state.frames.length === 0) {
+                dom.welcomeScreen.classList.remove('hidden');
+                dom.controlsPanel.classList.add('hidden');
+                dom.viewerImg.classList.add('hidden');
+                dom.noFramesMsg.classList.add('hidden');
+            } else {
+                dom.welcomeScreen.classList.add('hidden');
+                dom.controlsPanel.classList.remove('hidden');
+                if (currentFrame) {
+                    dom.viewerImg.src = currentFrame.url;
+                    dom.viewerImg.alt = currentFrame.name;
+                    dom.viewerImg.classList.remove('hidden');
+                    dom.noFramesMsg.classList.add('hidden');
+                } else {
+                    dom.viewerImg.classList.add('hidden');
+                    dom.noFramesMsg.classList.remove('hidden');
+                }
+            }
+            dom.viewerBg.style.backgroundColor = state.backgroundColor;
+
+            // Render Controls
+            dom.playPauseBtn.textContent = state.isPlaying ? 'Aturar' : 'Reproduir';
+            dom.playPauseBtn.style.backgroundColor = state.isPlaying ? '#ef4444' : '#22c55e';
+            dom.prevFrameBtn.disabled = state.isPlaying || enabledFrames.length < 2;
+            dom.nextFrameBtn.disabled = state.isPlaying || enabledFrames.length < 2;
+            dom.speedSlider.value = state.animationSpeed;
+            dom.speedValue.textContent = state.animationSpeed;
+            dom.bgColorPicker.value = state.backgroundColor;
+
+            // Render Panels Layout
+            dom.viewerPanel.style.width = `${state.panelWidth}%`;
+            dom.framesPanelContainer.style.width = `calc(100% - ${state.panelWidth}% - 8px)`;
+
+            // Render Frame List
+            dom.enabledFramesCount.textContent = enabledFrames.length;
+            dom.totalFramesCount.textContent = state.frames.length;
+            dom.framesList.innerHTML = ''; // Clear list
+            if (state.dragOverIndex === 0) {
+                dom.framesList.insertAdjacentHTML('beforeend', '<li class="drop-indicator"></li>');
+            }
+            state.frames.forEach((frame, index) => {
+                const isCurrent = currentFrame?.url === frame.url;
+                const listItemHTML = `
+                    <li
+                        class="list-item flex items-center p-2 rounded-lg space-x-2 
+                            ${state.draggedItemIndex === index ? 'dragging' : ''} 
+                            ${!frame.enabled ? 'disabled' : ''} 
+                            ${isCurrent ? 'is-current' : ''}"
+                        draggable="true"
+                        data-index="${index}"
+                    >
+                        <input type="checkbox" ${frame.enabled ? 'checked' : ''} data-index="${index}" class="frame-checkbox"/>
+                        <img src="${frame.url}" alt="${frame.name}" class="w-12 h-12 object-contain border rounded"/>
+                        <span class="flex-1 truncate" title="${frame.name}">${frame.name}</span>
+                        <button class="text-red-500 font-bold delete-btn" data-index="${index}">X</button>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-400 cursor-grab drag-handle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle>
+                            <circle cx="5" cy="5" r="1"></circle><circle cx="5" cy="12" r="1"></circle><circle cx="5" cy="19" r="1"></circle>
+                            <circle cx="19" cy="5" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="19" cy="19" r="1"></circle>
+                        </svg>
+                    </li>
+                    ${state.dragOverIndex === index + 1 ? '<li class="drop-indicator"></li>' : ''}
+                `;
+                dom.framesList.insertAdjacentHTML('beforeend', listItemHTML);
+            });
+            
+            // Render Modals/Panels
+            dom.savePanel.classList.toggle('hidden', !state.isSavePanelVisible);
+            dom.videoModal.classList.toggle('hidden', !state.isVideoModalVisible);
+        }
+        
+        // --- Event Handlers & Business Logic ---
+        
+        function updateCurrentFrameIndex() {
+            const enabledFrames = getEnabledFrames();
+            if (state.currentFrameIndex >= enabledFrames.length && enabledFrames.length > 0) {
+                 state.currentFrameIndex = 0;
+            }
+        }
+        
+        function togglePlay() {
+            const enabledFrames = getEnabledFrames();
+            if (enabledFrames.length < 2) {
+                state.isPlaying = false;
+                if(animationInterval) clearInterval(animationInterval);
+                animationInterval = null;
+                render();
+                return;
+            }
+
+            state.isPlaying = !state.isPlaying;
+            if (state.isPlaying) {
+                animationInterval = setInterval(() => {
+                    const enabledCount = getEnabledFrames().length;
+                    state.currentFrameIndex = (state.currentFrameIndex + 1) % enabledCount;
+                    render();
+                }, state.animationSpeed);
+            } else {
+                if (animationInterval) clearInterval(animationInterval);
+                animationInterval = null;
+            }
+            render();
+        }
+
+        async function handleFilesSelected(files) {
+            if (!files) return;
+            const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+            if (imageFiles.length === 0) return;
+
+            const newFrames = await Promise.all(
+                imageFiles.map(async file => {
+                    const url = await readFileAsDataURL(file);
+                    return { url, name: file.name, enabled: true };
+                })
+            );
+            state.frames = [...state.frames, ...newFrames];
+            updateCurrentFrameIndex();
+            render();
+        }
+        
+        function handleVideoFileSelected(files) {
+            const file = files?.[0];
+            if (file && file.type.startsWith('video/')) {
+                const videoElement = document.createElement('video');
+                videoElement.preload = 'metadata';
+                videoElement.src = URL.createObjectURL(file);
+                videoElement.onloadedmetadata = () => {
+                    state.videoDuration = videoElement.duration;
+                    dom.videoDuration.textContent = state.videoDuration.toFixed(2);
+                    dom.trimEnd.value = state.videoDuration;
+                    dom.trimEnd.max = state.videoDuration;
+                    dom.trimStart.value = 0;
+                    dom.trimStart.max = state.videoDuration;
+                    URL.revokeObjectURL(videoElement.src);
+                    state.videoFile = file;
+                    state.isVideoModalVisible = true;
+                    dom.videoModalContent.classList.remove('hidden');
+                    dom.videoExtractionProgress.classList.add('hidden');
+                    render();
+                };
+            }
+        }
+        
+        async function handleExtractFrames() {
+            if (!state.videoFile) return;
+
+            dom.videoModalContent.classList.add('hidden');
+            dom.videoExtractionProgress.classList.remove('hidden');
+            dom.extractionStatus.textContent = 'Iniciant extracció...';
+            extractionAbortController = new AbortController();
+            const signal = extractionAbortController.signal;
+
+            const videoElement = document.createElement('video');
+            videoElement.src = URL.createObjectURL(state.videoFile);
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            
+            const trimStart = Number(dom.trimStart.value);
+            const trimEnd = Number(dom.trimEnd.value);
+            const extractionFps = Number(dom.fps.value);
+
+            const extractedFrames = [];
+            const interval = 1 / extractionFps;
+            const totalFramesToExtract = Math.floor((trimEnd - trimStart) / interval);
+
+            try {
+                await new Promise((resolve, reject) => {
+                    videoElement.onloadedmetadata = resolve;
+                    videoElement.onerror = reject;
+                });
+                
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+
+                for (let i = 0; i < totalFramesToExtract; i++) {
+                    if (signal.aborted) {
+                        console.log('Extracció cancel·lada per l\'usuari.');
+                        break;
+                    }
+                    const time = trimStart + i * interval;
+                    videoElement.currentTime = time;
+                    
+                    await new Promise(resolve => {
+                        videoElement.onseeked = () => resolve();
+                    });
+                    
+                    context?.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                    const url = canvas.toDataURL('image/png');
+                    const name = `${state.videoFile.name.split('.')[0]}_frame_${String(i + 1).padStart(4, '0')}.png`;
+                    extractedFrames.push({ url, name, enabled: true });
+                    dom.extractionStatus.textContent = `Extret fotograma ${i + 1} de ${totalFramesToExtract}`;
+                }
+
+                if (!signal.aborted) {
+                     state.frames = [...state.frames, ...extractedFrames];
+                }
+
+            } catch (error) {
+                console.error("Error durant l'extracció de fotogrames:", error);
+            } finally {
+                state.isVideoModalVisible = false;
+                state.videoFile = null;
+                URL.revokeObjectURL(videoElement.src);
+                updateCurrentFrameIndex();
+                render();
+            }
+        }
+        
+        function cancelExtraction() {
+            if (extractionAbortController) {
+                extractionAbortController.abort();
+            }
+            state.isVideoModalVisible = false;
+            state.videoFile = null;
+            render();
+        }
+        
+        function handleSave() {
+            const name = document.getElementById('saveName').value || 'animacio';
+            const format = document.getElementById('format').value;
+            const framesToSave = getEnabledFrames();
+            
+            if (framesToSave.length === 0) {
+                alert("No hi ha fotogrames seleccionats per desar.");
+                return;
+            }
+            
+            if (format === 'zip') {
+                createZipAndDownload(framesToSave, name);
+            } else { // individual
+                framesToSave.forEach((frame, index) => {
+                    setTimeout(() => downloadURI(frame.url, `${name}_${String(index+1).padStart(4,'0')}.png`), index * 200);
+                });
+            }
+            state.isSavePanelVisible = false;
+            render();
+        }
+
+        function bindEvents() {
+            // File selection
+            dom.selectImagesBtn.addEventListener('click', () => dom.imageInput.click());
+            dom.importVideoBtn.addEventListener('click', () => dom.videoInput.click());
+            dom.imageInput.addEventListener('change', (e) => handleFilesSelected(e.target.files));
+            dom.videoInput.addEventListener('change', (e) => handleVideoFileSelected(e.target.files));
+
+            // Drop zone
+            dom.dropZone.addEventListener('dragover', (e) => e.preventDefault());
+            dom.dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                handleFilesSelected(e.dataTransfer.files);
+            });
+
+            // Player controls
+            dom.playPauseBtn.addEventListener('click', togglePlay);
+            dom.prevFrameBtn.addEventListener('click', () => {
+                const enabledCount = getEnabledFrames().length;
+                state.currentFrameIndex = (state.currentFrameIndex - 1 + enabledCount) % enabledCount;
+                render();
+            });
+            dom.nextFrameBtn.addEventListener('click', () => {
+                const enabledCount = getEnabledFrames().length;
+                state.currentFrameIndex = (state.currentFrameIndex + 1) % enabledCount;
+                render();
+            });
+            dom.speedSlider.addEventListener('input', (e) => {
+                state.animationSpeed = Number(e.target.value);
+                if (state.isPlaying) { // Reset interval with new speed
+                    togglePlay(); // stop
+                    togglePlay(); // start
+                }
+                render();
+            });
+            dom.speedSlider.addEventListener('change', saveStateToLocalStorage);
+            dom.bgColorPicker.addEventListener('input', (e) => {
+                state.backgroundColor = e.target.value;
+                render();
+            });
+            dom.bgColorPicker.addEventListener('change', saveStateToLocalStorage);
+
+            // Frame list controls
+            dom.selectAllBtn.addEventListener('click', () => {
+                state.frames = state.frames.map(f => ({ ...f, enabled: true }));
+                updateCurrentFrameIndex();
+                render();
+            });
+            dom.deselectAllBtn.addEventListener('click', () => {
+                state.frames = state.frames.map(f => ({ ...f, enabled: false }));
+                updateCurrentFrameIndex();
+                render();
+            });
+            
+            // Event delegation for dynamic frame list items
+            dom.framesList.addEventListener('click', (e) => {
+                const target = e.target;
+                const index = Number(target.dataset.index);
+
+                if (target.classList.contains('delete-btn')) {
+                    state.frames = state.frames.filter((_, i) => i !== index);
+                    updateCurrentFrameIndex();
+                    render();
+                } else if (target.classList.contains('frame-checkbox')) {
+                    state.frames[index].enabled = !state.frames[index].enabled;
+                    updateCurrentFrameIndex();
+                    render();
+                }
+            });
+
+            // Drag & Drop for frame list
+            dom.framesList.addEventListener('dragstart', e => {
+                if (e.target.classList.contains('list-item')) {
+                     state.draggedItemIndex = Number(e.target.dataset.index);
+                     e.dataTransfer.effectAllowed = 'move';
+                }
+            });
+            dom.framesList.addEventListener('dragover', e => {
+                 e.preventDefault();
+                 const targetItem = e.target.closest('.list-item');
+                 if (!targetItem || state.draggedItemIndex === null) return;
+                 
+                 const index = Number(targetItem.dataset.index);
+                 if (state.draggedItemIndex === index) {
+                     state.dragOverIndex = null;
+                 } else {
+                     const rect = targetItem.getBoundingClientRect();
+                     const midpoint = rect.top + rect.height / 2;
+                     state.dragOverIndex = e.clientY < midpoint ? index : index + 1;
+                 }
+                 render();
+            });
+            dom.framesList.addEventListener('dragleave', () => {
+                state.dragOverIndex = null;
+                render();
+            });
+            dom.framesList.addEventListener('drop', e => {
+                e.preventDefault();
+                if (state.draggedItemIndex === null || state.dragOverIndex === null) return;
+                
+                const movedFrame = state.frames[state.draggedItemIndex];
+                const remainingFrames = state.frames.filter((_, i) => i !== state.draggedItemIndex);
+                
+                let finalIndex = state.dragOverIndex;
+                if (state.draggedItemIndex < finalIndex) finalIndex--;
+
+                state.frames = [
+                    ...remainingFrames.slice(0, finalIndex),
+                    movedFrame,
+                    ...remainingFrames.slice(finalIndex)
+                ];
+                
+                state.draggedItemIndex = null;
+                state.dragOverIndex = null;
+                render();
+            });
+            
+            // Resizing
+            let isResizing = false;
+            dom.resizeHandle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                isResizing = true;
+                dom.resizeHandle.classList.add('resizing');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+            });
+            window.addEventListener('mousemove', (e) => {
+                if (isResizing) {
+                    const newWidth = (e.clientX / window.innerWidth) * 100;
+                    if (newWidth > 20 && newWidth < 80) {
+                        state.panelWidth = newWidth;
+                        render();
+                    }
+                }
+            });
+            window.addEventListener('mouseup', () => {
+                if (isResizing) {
+                    isResizing = false;
+                    dom.resizeHandle.classList.remove('resizing');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                    saveStateToLocalStorage();
+                }
+            });
+            
+            // Save panel
+            dom.saveBtn.addEventListener('click', () => { state.isSavePanelVisible = true; render(); });
+            dom.cancelSaveBtn.addEventListener('click', () => { state.isSavePanelVisible = false; render(); });
+            dom.confirmSaveBtn.addEventListener('click', handleSave);
+
+            // Video modal
+            dom.processVideoBtn.addEventListener('click', handleExtractFrames);
+            dom.cancelVideoBtn.addEventListener('click', cancelExtraction);
+            dom.cancelExtractionBtn.addEventListener('click', cancelExtraction);
+        }
+
+        // --- App Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStateFromLocalStorage();
+            bindEvents();
+            render();
+        });
+
+    </script>
 </body>
 </html>

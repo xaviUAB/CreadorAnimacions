@@ -308,6 +308,7 @@
                 saveAs(content, `${name}.zip`);
             } catch (error) {
                 console.error("Error creating ZIP file:", error);
+                throw error; // Re-throw error to be caught by handleSave
             }
         };
 
@@ -609,25 +610,38 @@
             render();
         }
         
-        function handleSave() {
+        async function handleSave() {
             const name = document.getElementById('saveName').value || 'animacio';
             const format = document.getElementById('format').value;
             const framesToSave = getEnabledFrames();
-            
+
             if (framesToSave.length === 0) {
                 alert("No hi ha fotogrames seleccionats per desar.");
                 return;
             }
-            
-            if (format === 'zip') {
-                createZipAndDownload(framesToSave, name);
-            } else { // individual
-                framesToSave.forEach((frame, index) => {
-                    setTimeout(() => downloadURI(frame.url, `${name}_${String(index+1).padStart(4,'0')}.png`), index * 200);
-                });
+
+            // Add loading state
+            dom.confirmSaveBtn.disabled = true;
+            dom.confirmSaveBtn.textContent = 'Generant...';
+
+            try {
+                if (format === 'zip') {
+                    await createZipAndDownload(framesToSave, name);
+                } else { // individual
+                    framesToSave.forEach((frame, index) => {
+                        setTimeout(() => downloadURI(frame.url, `${name}_${String(index+1).padStart(4,'0')}.png`), index * 200);
+                    });
+                }
+            } catch (error) {
+                console.error("Error durant el procés de desat:", error);
+                alert("S'ha produït un error en desar el fitxer.");
+            } finally {
+                // Reset button state and hide panel
+                dom.confirmSaveBtn.disabled = false;
+                dom.confirmSaveBtn.textContent = 'Confirmar i Desar';
+                state.isSavePanelVisible = false;
+                render(); // Render to hide the panel
             }
-            state.isSavePanelVisible = false;
-            render();
         }
 
         /**
